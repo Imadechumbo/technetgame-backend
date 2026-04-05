@@ -421,3 +421,15 @@ export function getOpenClawState() {
     publicDomain: process.env.RAILWAY_PUBLIC_DOMAIN || null,
   };
 }
+export function createAttachmentRecords(files = []) {
+  return files.map((file) => ({
+    id: `upload_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+    originalName: file.originalname || file.name || 'file',
+    name: file.originalname || file.name || 'file',
+    mimeType: file.mimetype || file.type || 'application/octet-stream',
+    size: file.size || 0,
+    textPreview: file.buffer
+      ? file.buffer.toString('utf8', 0, 1000)
+      : (file.textPreview || '')
+  }));
+}
