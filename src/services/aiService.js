@@ -7,11 +7,16 @@ const attachmentStore = new Map();
 
 const GROQ_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.groq.com/openai/v1';
 const GROQ_API_KEY = process.env.OPENAI_API_KEY || '';
-const GROQ_MODEL = process.env.OPENAI_MODEL || process.env.DEFAULT_CHAT_MODEL || 'llama-3.3-70b-versatile';
+const GROQ_MODEL =
+  process.env.OPENAI_MODEL ||
+  process.env.DEFAULT_CHAT_MODEL ||
+  'llama-3.3-70b-versatile';
 
-const OPENROUTER_BASE_URL = process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
+const OPENROUTER_BASE_URL =
+  process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.3-70b-instruct:free';
+const OPENROUTER_MODEL =
+  process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.3-70b-instruct:free';
 
 const SITE_URL = process.env.SITE_URL || 'https://technetgame.com.br';
 const SITE_NAME = process.env.SITE_NAME || 'TechNetGame';
@@ -19,7 +24,7 @@ const SITE_NAME = process.env.SITE_NAME || 'TechNetGame';
 const DEFAULT_MODELS = [
   { name: GROQ_MODEL, provider: 'groq' },
   { name: OPENROUTER_MODEL, provider: 'openrouter' },
-  { name: 'technet-auto', provider: 'auto' }
+  { name: 'technet-auto', provider: 'auto' },
 ];
 
 function nowIso() {
@@ -64,7 +69,11 @@ export function getUsageForToken(token) {
   const { user } = requireUserFromToken(token);
   return {
     user: { id: user.id, email: user.email, plan: user.plan },
-    usage: { usedToday: user.usedToday, limit: user.limit, effectivePlan: user.plan },
+    usage: {
+      usedToday: user.usedToday,
+      limit: user.limit,
+      effectivePlan: user.plan,
+    },
   };
 }
 
@@ -75,6 +84,7 @@ export function incrementUsage(token) {
 export function listSessionsForToken(token) {
   requireUserFromToken(token);
   const ids = [...(sessionIndexByToken.get(token) || new Set())];
+
   return ids
     .map((id) => sessions.get(id))
     .filter(Boolean)
@@ -91,11 +101,13 @@ export function listSessionsForToken(token) {
 export function getSessionById(token, id) {
   requireUserFromToken(token);
   const session = sessions.get(id);
+
   if (!session || session.token !== token) {
     const error = new Error('Sessão não encontrada');
     error.status = 404;
     throw error;
   }
+
   return session;
 }
 
@@ -107,12 +119,20 @@ export function deleteSessionById(token, id) {
 }
 
 function guessAttachmentCategory(file) {
-  const mime = String(file.mimetype || '').toLowerCase();
+  const mime = String(file.mimetype || file.type || '').toLowerCase();
+
   if (mime.includes('pdf')) return 'pdf';
   if (mime.includes('word') || mime.includes('document')) return 'doc';
   if (mime.includes('image')) return 'imagem';
   if (mime.includes('zip')) return 'zip';
-  if (mime.includes('json') || mime.includes('javascript') || mime.includes('text')) return 'texto';
+  if (
+    mime.includes('json') ||
+    mime.includes('javascript') ||
+    mime.includes('text')
+  ) {
+    return 'texto';
+  }
+
   return 'arquivo';
 }
 
@@ -122,14 +142,17 @@ export function createAttachmentRecords(files = []) {
     const record = {
       id,
       fieldName: file.fieldname,
-      originalName: file.originalname,
-      name: file.originalname,
-      mimeType: file.mimetype,
-      size: file.size,
+      originalName: file.originalname || file.name || 'file',
+      name: file.originalname || file.name || 'file',
+      mimeType: file.mimetype || file.type || 'application/octet-stream',
+      size: file.size || 0,
       category: guessAttachmentCategory(file),
       uploadedAt: nowIso(),
-      textPreview: file.buffer ? file.buffer.toString('utf8', 0, Math.min(file.buffer.length, 2000)) : '',
+      textPreview: file.buffer
+        ? file.buffer.toString('utf8', 0, Math.min(file.buffer.length, 2000))
+        : (file.textPreview || ''),
     };
+
     attachmentStore.set(id, record);
     return record;
   });
@@ -141,28 +164,49 @@ function deriveTitle(message) {
 
 function chooseAgentSystem(message = '') {
   const text = String(message).toLowerCase();
-  if (/código|code|bug|erro|patch|api|backend|frontend|javascript|node|deploy/.test(text)) return 'coder';
-  if (/pesquisa|rss|fonte|fontes|buscar|news|notícia|osint|investigar/.test(text)) return 'research';
-  if (/plano|estratégia|roadmap|arquitetura|checklist|passos|organizar/.test(text)) return 'planner';
+
+  if (/código|code|bug|erro|patch|api|backend|frontend|javascript|node|deploy/.test(text)) {
+    return 'coder';
+  }
+  if (/pesquisa|rss|fonte|fontes|buscar|news|notícia|osint|investigar/.test(text)) {
+    return 'research';
+  }
+  if (/plano|estratégia|roadmap|arquitetura|checklist|passos|organizar/.test(text)) {
+    return 'planner';
+  }
+
   return 'default';
 }
 
 function buildSystemPrompt(agentSystem, attachments = []) {
-  const base = 'Você é o TechNet AI, um assistente em português do Brasil, útil, objetivo e profissional.';
+  const base =
+    'Você é o TechNet AI, um assistente em português do Brasil, útil, objetivo e profissional.';
+
   const byAgent = {
-    planner: 'Atue como estrategista e organizador. Entregue planos claros, por etapas e com prioridade.',
-    coder: 'Atue como engenheiro de software sênior. Foque em correções práticas, patches e diagnóstico técnico.',
-    research: 'Atue como analista de pesquisa e OSINT. Resuma fontes, contexto e próximos passos.',
-    default: 'Atue como assistente geral da TechNet, com respostas úteis, diretas e orientadas à ação.',
+    planner:
+      'Atue como estrategista e organizador. Entregue planos claros, por etapas e com prioridade.',
+    coder:
+      'Atue como engenheiro de software sênior. Foque em correções práticas, patches e diagnóstico técnico.',
+    research:
+      'Atue como analista de pesquisa e OSINT. Resuma fontes, contexto e próximos passos.',
+    default:
+      'Atue como assistente geral da TechNet, com respostas úteis, diretas e orientadas à ação.',
   };
+
   const attachmentHint = attachments.length
-    ? `Considere também estes anexos: ${attachments.map((a) => `${a.originalName || a.name} (${a.category || 'arquivo'})`).join(', ')}.`
+    ? `Considere também estes anexos: ${attachments
+        .map((a) => `${a.originalName || a.name} (${a.category || 'arquivo'})`)
+        .join(', ')}.`
     : '';
-  return [base, byAgent[agentSystem] || byAgent.default, attachmentHint].filter(Boolean).join(' ');
+
+  return [base, byAgent[agentSystem] || byAgent.default, attachmentHint]
+    .filter(Boolean)
+    .join(' ');
 }
 
 function isRetryableProviderError(status, message = '') {
   const msg = String(message || '').toLowerCase();
+
   return (
     status === 408 ||
     status === 409 ||
@@ -230,15 +274,25 @@ async function callOpenAICompatible({
   });
 
   const data = await readJsonSafe(response);
+
   if (!response.ok) {
-    const error = new Error(data?.error?.message || data?.message || data?.raw || `Falha no provedor ${providerName}`);
+    const error = new Error(
+      data?.error?.message ||
+        data?.message ||
+        data?.raw ||
+        `Falha no provedor ${providerName}`
+    );
     error.status = response.status;
     error.provider = providerName;
     error.payload = data;
     throw error;
   }
 
-  const content = data?.choices?.[0]?.message?.content?.trim() || data?.choices?.[0]?.text?.trim() || null;
+  const content =
+    data?.choices?.[0]?.message?.content?.trim() ||
+    data?.choices?.[0]?.text?.trim() ||
+    null;
+
   if (!content) {
     const error = new Error(`${providerName}: empty response`);
     error.status = 502;
@@ -250,11 +304,22 @@ async function callOpenAICompatible({
   return { answer: content, provider: providerName, model, raw: data };
 }
 
-async function generateWithFallback({ selectedModel, systemPrompt, message, attachments }) {
+async function generateWithFallback({
+  selectedModel,
+  systemPrompt,
+  message,
+  attachments,
+}) {
   const wantsOpenRouter = /^openrouter:/i.test(selectedModel);
-  const cleanModel = String(selectedModel || '').replace(/^openrouter:/i, '').trim();
+  const cleanModel = String(selectedModel || '')
+    .replace(/^openrouter:/i, '')
+    .trim();
+
   const groqModel = !wantsOpenRouter ? (cleanModel || GROQ_MODEL) : GROQ_MODEL;
-  const openrouterModel = wantsOpenRouter ? (cleanModel || OPENROUTER_MODEL) : OPENROUTER_MODEL;
+  const openrouterModel = wantsOpenRouter
+    ? (cleanModel || OPENROUTER_MODEL)
+    : OPENROUTER_MODEL;
+
   const errors = [];
 
   try {
@@ -268,8 +333,15 @@ async function generateWithFallback({ selectedModel, systemPrompt, message, atta
       providerName: 'groq',
     });
   } catch (error) {
-    errors.push({ provider: 'groq', status: error.status || 500, message: error.message });
-    if (!isRetryableProviderError(error.status || 500, error.message)) throw error;
+    errors.push({
+      provider: 'groq',
+      status: error.status || 500,
+      message: error.message,
+    });
+
+    if (!isRetryableProviderError(error.status || 500, error.message)) {
+      throw error;
+    }
   }
 
   try {
@@ -287,7 +359,12 @@ async function generateWithFallback({ selectedModel, systemPrompt, message, atta
       },
     });
   } catch (error) {
-    errors.push({ provider: 'openrouter', status: error.status || 500, message: error.message });
+    errors.push({
+      provider: 'openrouter',
+      status: error.status || 500,
+      message: error.message,
+    });
+
     const finalError = new Error('Todos os providers falharam');
     finalError.status = 503;
     finalError.providers = errors;
@@ -295,13 +372,19 @@ async function generateWithFallback({ selectedModel, systemPrompt, message, atta
   }
 }
 
-function fallbackAnswer({ message, agentSystem, attachments, providerErrors = [] }) {
-  const intro = {
-    planner: 'Montei um plano objetivo para você seguir agora.',
-    coder: 'Preparei um diagnóstico técnico direto ao ponto.',
-    research: 'Organizei uma análise rápida do contexto pedido.',
-    default: 'Separei uma resposta clara e prática para o seu pedido.',
-  }[agentSystem] || 'Preparei uma resposta útil para o seu pedido.';
+function fallbackAnswer({
+  message,
+  agentSystem,
+  attachments,
+  providerErrors = [],
+}) {
+  const intro =
+    {
+      planner: 'Montei um plano objetivo para você seguir agora.',
+      coder: 'Preparei um diagnóstico técnico direto ao ponto.',
+      research: 'Organizei uma análise rápida do contexto pedido.',
+      default: 'Separei uma resposta clara e prática para o seu pedido.',
+    }[agentSystem] || 'Preparei uma resposta útil para o seu pedido.';
 
   const bullets = [
     `Pedido recebido: ${message}`,
@@ -310,11 +393,17 @@ function fallbackAnswer({ message, agentSystem, attachments, providerErrors = []
   ];
 
   if (attachments.length) {
-    bullets.push(`Anexos detectados: ${attachments.map((a) => a.originalName || a.name).join(', ')}.`);
+    bullets.push(
+      `Anexos detectados: ${attachments.map((a) => a.originalName || a.name).join(', ')}.`
+    );
   }
 
   if (providerErrors.length) {
-    bullets.push(`Falhas dos providers: ${providerErrors.map((item) => `${item.provider} (${item.status}): ${item.message}`).join(' | ')}`);
+    bullets.push(
+      `Falhas dos providers: ${providerErrors
+        .map((item) => `${item.provider} (${item.status}): ${item.message}`)
+        .join(' | ')}`
+    );
   }
 
   return `${intro}\n\n- ${bullets.join('\n- ')}`;
@@ -330,18 +419,34 @@ function createSession(token, seedMessage = '') {
     updatedAt: nowIso(),
     messages: [],
   };
+
   sessions.set(id, session);
-  if (!sessionIndexByToken.has(token)) sessionIndexByToken.set(token, new Set());
+
+  if (!sessionIndexByToken.has(token)) {
+    sessionIndexByToken.set(token, new Set());
+  }
+
   sessionIndexByToken.get(token).add(id);
   return session;
 }
 
-export async function generateAssistantAnswer({ token, message, sessionId, model, attachments = [] }) {
+export async function generateAssistantAnswer({
+  token,
+  message,
+  sessionId,
+  model,
+  attachments = [],
+}) {
   incrementUsage(token);
 
   const agentSystem = chooseAgentSystem(message);
-  const session = sessionId ? getSessionById(token, sessionId) : createSession(token, message);
-  const attachmentRecords = attachments.map((item) => attachmentStore.get(item.id) || item).filter(Boolean);
+  const session = sessionId
+    ? getSessionById(token, sessionId)
+    : createSession(token, message);
+
+  const attachmentRecords = attachments
+    .map((item) => attachmentStore.get(item.id) || item)
+    .filter(Boolean);
 
   session.messages.push({
     id: newId('msg'),
@@ -354,6 +459,7 @@ export async function generateAssistantAnswer({ token, message, sessionId, model
 
   const selectedModel = model || GROQ_MODEL;
   const systemPrompt = buildSystemPrompt(agentSystem, attachmentRecords);
+
   let answer = null;
   let usedProvider = 'local-fallback';
   let usedModel = selectedModel;
@@ -373,12 +479,23 @@ export async function generateAssistantAnswer({ token, message, sessionId, model
       message,
       agentSystem,
       attachments: attachmentRecords,
-      providerErrors: error.providers || [{ provider: 'unknown', status: error.status || 500, message: error.message }],
+      providerErrors:
+        error.providers || [
+          {
+            provider: 'unknown',
+            status: error.status || 500,
+            message: error.message,
+          },
+        ],
     });
   }
 
   if (!answer) {
-    answer = fallbackAnswer({ message, agentSystem, attachments: attachmentRecords });
+    answer = fallbackAnswer({
+      message,
+      agentSystem,
+      attachments: attachmentRecords,
+    });
   }
 
   session.messages.push({
@@ -406,9 +523,11 @@ export async function generateAssistantAnswer({ token, message, sessionId, model
 export function splitIntoTokenChunks(text) {
   const normalized = String(text || '');
   const chunks = [];
+
   for (let i = 0; i < normalized.length; i += 12) {
     chunks.push(normalized.slice(i, i + 12));
   }
+
   return chunks;
 }
 
@@ -420,16 +539,4 @@ export function getOpenClawState() {
     fallbackModel: OPENROUTER_MODEL,
     publicDomain: process.env.RAILWAY_PUBLIC_DOMAIN || null,
   };
-}
-export function createAttachmentRecords(files = []) {
-  return files.map((file) => ({
-    id: `upload_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-    originalName: file.originalname || file.name || 'file',
-    name: file.originalname || file.name || 'file',
-    mimeType: file.mimetype || file.type || 'application/octet-stream',
-    size: file.size || 0,
-    textPreview: file.buffer
-      ? file.buffer.toString('utf8', 0, 1000)
-      : (file.textPreview || '')
-  }));
 }
