@@ -1,0 +1,5 @@
+[phases.setup]
+# Railway/Nixpacks detecta Node automaticamente
+
+[start]
+cmd = "npm start"
